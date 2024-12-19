@@ -22,7 +22,8 @@ type SqlxUserProvider struct {
 
 func (p *SqlxUserProvider) RetrieveById(ctx context.Context, identifier any) (auth.Authenticatable, error) {
 	user := p.ConstructUser()
-	err := p.DB.GetContext(ctx, user, fmt.Sprintf("SELECT * FROM %s WHERE id = $1", p.Table), identifier)
+	query := p.DB.Rebind(fmt.Sprintf("SELECT * FROM %s WHERE id = ?", p.Table))
+	err := p.DB.GetContext(ctx, user, query, identifier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, auth.ErrUserNotFound
 	}
@@ -31,7 +32,8 @@ func (p *SqlxUserProvider) RetrieveById(ctx context.Context, identifier any) (au
 
 func (p *SqlxUserProvider) RetrieveByToken(ctx context.Context, identifier any, token string) (auth.Authenticatable, error) {
 	user := p.ConstructUser()
-	err := p.DB.GetContext(ctx, user, fmt.Sprintf("SELECT * FROM %s WHERE id = $1", p.Table), identifier)
+	query := p.DB.Rebind(fmt.Sprintf("SELECT * FROM %s WHERE id = ?", p.Table))
+	err := p.DB.GetContext(ctx, user, query, identifier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, auth.ErrUserNotFound
 	} else if err != nil {
@@ -46,14 +48,16 @@ func (p *SqlxUserProvider) RetrieveByToken(ctx context.Context, identifier any, 
 }
 
 func (p *SqlxUserProvider) UpdateRememberToken(ctx context.Context, user auth.Authenticatable, token string) error {
+	query := p.DB.Rebind(fmt.Sprintf(
+		"UPDATE %s SET %s = ? WHERE %s = ?",
+		p.Table,
+		user.GetRememberTokenName(),
+		user.GetAuthIdentifierName(),
+	))
+
 	_, err := p.DB.ExecContext(
 		ctx,
-		fmt.Sprintf(
-			"UPDATE %s SET %s = $1 WHERE %s = $2",
-			p.Table,
-			user.GetRememberTokenName(),
-			user.GetAuthIdentifierName(),
-		),
+		query,
 		token,
 		user.GetAuthIdentifier(),
 	)
@@ -71,7 +75,7 @@ func (p *SqlxUserProvider) RetrieveByCredentials(ctx context.Context, credential
 			continue
 		}
 
-		wheres = append(wheres, fmt.Sprintf("%s = $1", key))
+		wheres = append(wheres, fmt.Sprintf("%s = ?", key))
 		values = append(values, value)
 	}
 
@@ -79,10 +83,10 @@ func (p *SqlxUserProvider) RetrieveByCredentials(ctx context.Context, credential
 		return nil, auth.ErrUserNotFound
 	}
 
-	querySql := fmt.Sprintf("SELECT * FROM %s WHERE %s", p.Table, strings.Join(wheres, " AND "))
+	query := p.DB.Rebind(fmt.Sprintf("SELECT * FROM %s WHERE %s", p.Table, strings.Join(wheres, " AND ")))
 
 	var user = p.ConstructUser()
-	err := p.DB.GetContext(ctx, user, querySql, values...)
+	err := p.DB.GetContext(ctx, user, query, values...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, auth.ErrUserNotFound
 	}
@@ -109,14 +113,16 @@ func (p *SqlxUserProvider) RehashPasswordIfRequired(ctx context.Context, user au
 		return err
 	}
 
+	query := p.DB.Rebind(fmt.Sprintf(
+		"UPDATE %s SET %s = ? WHERE %s = ?",
+		p.Table,
+		user.GetAuthPasswordName(),
+		user.GetAuthIdentifierName(),
+	))
+
 	_, err = p.DB.ExecContext(
 		ctx,
-		fmt.Sprintf(
-			"UPDATE %s SET %s = $1 WHERE %s = $2",
-			p.Table,
-			user.GetAuthPasswordName(),
-			user.GetAuthIdentifierName(),
-		),
+		query,
 		hash,
 		user.GetAuthIdentifier(),
 	)
